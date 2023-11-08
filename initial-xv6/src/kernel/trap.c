@@ -16,6 +16,8 @@ void kernelvec();
 
 extern int devintr();
 
+int cowHandler(pagetable_t, uint64);
+
 void trapinit(void) { initlock(&tickslock, "time"); }
 
 // set up to take exceptions and traps while in the kernel.
@@ -57,6 +59,15 @@ void usertrap(void)
       intr_on();
 
       syscall();
+    }
+  // The r_scause of page fault is 15 or 13
+  else if(r_scause() == 15)
+    {
+      // page fault
+      if((cowHandler(p->pagetable, r_stval())) < 0)
+        {
+          p->killed = 1;
+        }
     }
   else if((which_dev = devintr()) != 0)
     {
@@ -235,4 +246,41 @@ int devintr()
     {
       return 0;
     }
+}
+
+int check_valid_page(pte_t *pte)
+{
+  return (pte != 0) && ((*pte & PTE_U) != 0) && ((*pte & PTE_V) != 0);
+}
+
+uint64 allocate_and_copy_page(uint64 pa1)
+{
+  uint64 pa2 = (uint64)kalloc();
+  if(pa2 == 0)
+    return 0; // Allocation failure
+
+  memmove((void *)pa2, (void *)pa1, PGSIZE);
+  return pa2;
+}
+
+int cowHandler(pagetable_t pt, uint64 va)
+{
+  if(va >= MAXVA)
+    return -1;
+
+  pte_t *pte = walk(pt, va, 0);
+  if(!check_valid_page(pte))
+    return -1;
+
+  uint64 pa1 = PTE2PA(*pte);
+  uint64 pa2 = allocate_and_copy_page(pa1);
+  if(pa2 == 0)
+    return -1; // Allocation failure
+
+  // Update page table entry for the new page
+  *pte = PA2PTE(pa2) | PTE_U | PTE_V | PTE_W | PTE_X | PTE_R;
+
+  // Free the original page
+  kfree((void *)pa1);
+  return 0; // Success
 }

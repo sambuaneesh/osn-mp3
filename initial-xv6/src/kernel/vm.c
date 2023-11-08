@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+
+// Custom Declarations
+void increase_cnt(uint64);
+int cowHandler(pagetable_t, uint64);
 
 /*
  * the kernel's page table.
@@ -304,35 +309,53 @@ void uvmfree(pagetable_t pagetable, uint64 sz)
 // frees any allocated pages on failure.
 int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
+  // Declare variables
   pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
+  uint64 pa, i, flags;
 
+  // Iterate over each page in the old address space
   for(i = 0; i < sz; i += PGSIZE)
     {
+      // Get the PTE for the current page
       if((pte = walk(old, i, 0)) == 0)
+        // If the PTE is null, panic
         panic("uvmcopy: pte should exist");
+
+      // If the page is not valid, panic
       if((*pte & PTE_V) == 0)
         panic("uvmcopy: page not present");
+
+      // Get the physical address from the PTE
       pa = PTE2PA(*pte);
+
+      // Set the page to read-only
+      *pte &= ~PTE_W;
+
+      // Get the flags from the PTE
       flags = PTE_FLAGS(*pte);
-      if((mem = kalloc()) == 0)
-        goto err;
-      memmove(mem, (char *)pa, PGSIZE);
-      if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
+
+      // Increase the reference count for the page
+      increase_cnt(pa);
+
+      // Map the page in the new address space
+      // If the mapping fails, go to error handling
+      if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0)
         {
-          kfree(mem);
           goto err;
         }
     }
+
+  // If all pages were successfully copied, return success
   return 0;
 
 err:
+  // If an error occurred, unmap any pages that were mapped in the new address
+  // space
   uvmunmap(new, 0, i / PGSIZE, 1);
+
+  // Return an error
   return -1;
 }
-
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void uvmclear(pagetable_t pagetable, uint64 va)
@@ -355,6 +378,13 @@ int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   while(len > 0)
     {
       va0 = PGROUNDDOWN(dstva);
+      // for the last testcase
+      if(va0 > MAXVA)
+        return -1;
+      if(cowHandler(pagetable, va0) < 0)
+        {
+          return -1;
+        }
       pa0 = walkaddr(pagetable, va0);
       if(pa0 == 0)
         return -1;
