@@ -16,16 +16,10 @@ void kernelvec();
 
 extern int devintr();
 
-void trapinit(void)
-{
-  initlock(&tickslock, "time");
-}
+void trapinit(void) { initlock(&tickslock, "time"); }
 
 // set up to take exceptions and traps while in the kernel.
-void trapinithart(void)
-{
-  w_stvec((uint64)kernelvec);
-}
+void trapinithart(void) { w_stvec((uint64)kernelvec); }
 
 //
 // handle an interrupt, exception, or system call from user space.
@@ -35,7 +29,7 @@ void usertrap(void)
 {
   int which_dev = 0;
 
-  if ((r_sstatus() & SSTATUS_SPP) != 0)
+  if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
   // send interrupts and exceptions to kerneltrap(),
@@ -47,39 +41,39 @@ void usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
 
-  if (r_scause() == 8)
-  {
-    // system call
+  if(r_scause() == 8)
+    {
+      // system call
 
-    if (killed(p))
-      exit(-1);
+      if(killed(p))
+        exit(-1);
 
-    // sepc points to the ecall instruction,
-    // but we want to return to the next instruction.
-    p->trapframe->epc += 4;
+      // sepc points to the ecall instruction,
+      // but we want to return to the next instruction.
+      p->trapframe->epc += 4;
 
-    // an interrupt will change sepc, scause, and sstatus,
-    // so enable only now that we're done with those registers.
-    intr_on();
+      // an interrupt will change sepc, scause, and sstatus,
+      // so enable only now that we're done with those registers.
+      intr_on();
 
-    syscall();
-  }
-  else if ((which_dev = devintr()) != 0)
-  {
-    // ok
-  }
+      syscall();
+    }
+  else if((which_dev = devintr()) != 0)
+    {
+      // ok
+    }
   else
-  {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p);
-  }
+    {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
 
-  if (killed(p))
+  if(killed(p))
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2)
+  if(which_dev == 2)
     yield();
 
   usertrapret();
@@ -139,20 +133,20 @@ void kerneltrap()
   uint64 sstatus = r_sstatus();
   uint64 scause = r_scause();
 
-  if ((sstatus & SSTATUS_SPP) == 0)
+  if((sstatus & SSTATUS_SPP) == 0)
     panic("kerneltrap: not from supervisor mode");
-  if (intr_get() != 0)
+  if(intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
-  if ((which_dev = devintr()) == 0)
-  {
-    printf("scause %p\n", scause);
-    printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
-    panic("kerneltrap");
-  }
+  if((which_dev = devintr()) == 0)
+    {
+      printf("scause %p\n", scause);
+      printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+      panic("kerneltrap");
+    }
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
 
   // the yield() may have caused some traps to occur,
@@ -193,53 +187,52 @@ int devintr()
 {
   uint64 scause = r_scause();
 
-  if ((scause & 0x8000000000000000L) &&
-      (scause & 0xff) == 9)
-  {
-    // this is a supervisor external interrupt, via PLIC.
-
-    // irq indicates which device interrupted.
-    int irq = plic_claim();
-
-    if (irq == UART0_IRQ)
+  if((scause & 0x8000000000000000L) && (scause & 0xff) == 9)
     {
-      uartintr();
+      // this is a supervisor external interrupt, via PLIC.
+
+      // irq indicates which device interrupted.
+      int irq = plic_claim();
+
+      if(irq == UART0_IRQ)
+        {
+          uartintr();
+        }
+      else if(irq == VIRTIO0_IRQ)
+        {
+          virtio_disk_intr();
+        }
+      else if(irq)
+        {
+          printf("unexpected interrupt irq=%d\n", irq);
+        }
+
+      // the PLIC allows each device to raise at most one
+      // interrupt at a time; tell the PLIC the device is
+      // now allowed to interrupt again.
+      if(irq)
+        plic_complete(irq);
+
+      return 1;
     }
-    else if (irq == VIRTIO0_IRQ)
+  else if(scause == 0x8000000000000001L)
     {
-      virtio_disk_intr();
+      // software interrupt from a machine-mode timer interrupt,
+      // forwarded by timervec in kernelvec.S.
+
+      if(cpuid() == 0)
+        {
+          clockintr();
+        }
+
+      // acknowledge the software interrupt by clearing
+      // the SSIP bit in sip.
+      w_sip(r_sip() & ~2);
+
+      return 2;
     }
-    else if (irq)
-    {
-      printf("unexpected interrupt irq=%d\n", irq);
-    }
-
-    // the PLIC allows each device to raise at most one
-    // interrupt at a time; tell the PLIC the device is
-    // now allowed to interrupt again.
-    if (irq)
-      plic_complete(irq);
-
-    return 1;
-  }
-  else if (scause == 0x8000000000000001L)
-  {
-    // software interrupt from a machine-mode timer interrupt,
-    // forwarded by timervec in kernelvec.S.
-
-    if (cpuid() == 0)
-    {
-      clockintr();
-    }
-
-    // acknowledge the software interrupt by clearing
-    // the SSIP bit in sip.
-    w_sip(r_sip() & ~2);
-
-    return 2;
-  }
   else
-  {
-    return 0;
-  }
+    {
+      return 0;
+    }
 }
