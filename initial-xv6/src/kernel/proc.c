@@ -149,9 +149,11 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-  p->rtime = 0;
+  p->RTime = 0;
   p->etime = 0;
   p->ctime = ticks;
+  p->STime = 0;
+  p->WTime = 0;
   return p;
 }
 
@@ -704,7 +706,7 @@ void procdump(void)
 }
 
 // waitx
-int waitx(uint64 addr, uint *wtime, uint *rtime)
+int waitx(uint64 addr, uint *wtime, uint *RTime)
 {
   struct proc *np;
   int havekids, pid;
@@ -728,8 +730,8 @@ int waitx(uint64 addr, uint *wtime, uint *rtime)
         {
           // Found one.
           pid = np->pid;
-          *rtime = np->rtime;
-          *wtime = np->etime - np->ctime - np->rtime;
+          *RTime = np->RTime;
+          *wtime = np->etime - np->ctime - np->RTime;
           if (addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                    sizeof(np->xstate)) < 0)
           {
@@ -766,7 +768,15 @@ void update_time()
     acquire(&p->lock);
     if (p->state == RUNNING)
     {
-      p->rtime++;
+      p->RTime++;
+    }
+    else if (p->state == SLEEPING)
+    {
+      p->STime++;
+    }
+    else if(p->state == RUNNABLE)
+    {
+      p->WTime++;
     }
     release(&p->lock);
   }

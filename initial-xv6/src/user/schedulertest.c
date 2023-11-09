@@ -9,7 +9,7 @@
 int main()
 {
   int n, pid;
-  int wtime, rtime;
+  int wtime, RTime;
   int twtime = 0, trtime = 0;
   for (n = 0; n < NFORK; n++)
   {
@@ -34,12 +34,12 @@ int main()
   }
   for (; n > 0; n--)
   {
-    if (waitx(0, &wtime, &rtime) >= 0)
+    if (waitx(0, &wtime, &RTime) >= 0)
     {
-      trtime += rtime;
+      trtime += RTime;
       twtime += wtime;
     }
   }
-  printf("Average rtime %d,  wtime %d\n", trtime / NFORK, twtime / NFORK);
+  printf("Average RTime %d,  wtime %d\n", trtime / NFORK, twtime / NFORK);
   exit(0);
 }

@@ -116,9 +116,15 @@ struct proc
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  uint rtime;                  // How long the process ran for
+  uint RTime;                  // How long the process ran for
   uint ctime;                  // When was the process created
   uint etime;                  // When did the process exited
+
+  // PBS
+  uint STime; // The total time the process has spent sleeping (i.e., blocked
+              // and not using CPU time) since it was last scheduled.
+  uint WTime; // The total time the process has spent in the ready queue waiting
+              // to be scheduled
 };
 
 extern struct proc proc[NPROC];

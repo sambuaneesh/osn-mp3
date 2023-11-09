@@ -177,7 +177,7 @@ void clockintr()
   //   if (p->state == RUNNING)
   //   {
   //     printf("here");
-  //     p->rtime++;
+  //     p->RTime++;
   //   }
   //   // if (p->state == SLEEPING)
   //   // {
