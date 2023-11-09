@@ -74,12 +74,8 @@ void *customerThread(void *arg) {
     gettimeofday(&end, NULL);
     current_time = (int)(end.tv_sec - start.tv_sec);
 
-    if (current_time - customer->arrival_time <= customer->tolerance) {
-        pthread_mutex_lock(&print_mutex);
-        printf(ANSI_COLOR_BLUE "Barista %d completes the order of customer %d at %d second(s)\n", selected_barista + 1, customer->id, current_time + 1);
-        printf(ANSI_COLOR_GREEN "Customer %d leaves with their order at %d second(s)\n", customer->id, current_time + 1);
-        pthread_mutex_unlock(&print_mutex);
-    } else {
+    // if tolerance is exceeded, customer leaves
+    if (current_time - customer->arrival_time > customer->tolerance) {
         pthread_mutex_lock(&print_mutex);
         printf(ANSI_COLOR_RED "Customer %d leaves without their order at %d second(s)\n", customer->id, current_time);
         sem_wait(&coffeeWasteMutex);
@@ -87,6 +83,12 @@ void *customerThread(void *arg) {
         sem_post(&coffeeWasteMutex);
         pthread_mutex_unlock(&print_mutex);
     }
+
+    pthread_mutex_lock(&print_mutex);
+    printf(ANSI_COLOR_BLUE "Barista %d completes the order of customer %d at %d second(s)\n", selected_barista + 1, customer->id, current_time + 1);
+    if(current_time - customer->arrival_time <= customer->tolerance)
+        printf(ANSI_COLOR_GREEN "Customer %d leaves with their order at %d second(s)\n", customer->id, current_time + 1);
+    pthread_mutex_unlock(&print_mutex);
 
     sem_post(&baristaSemaphores[selected_barista]);
     pthread_exit(NULL);
