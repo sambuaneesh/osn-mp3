@@ -10,6 +10,7 @@
 #define MAX_MACHINES 100
 #define MAX_FLAVORS 100
 #define MAX_TOPPINGS 100
+#define MAX_CUST_TOPPINGS 20
 
 // Reserved
 #define RED "\e[0;31m"
@@ -36,204 +37,317 @@
 
 #define DGREY "\x1B[38;5;240m"
 
-typedef struct {
+typedef struct
+{
     int id;
     int start_time;
     int end_time;
+    int isAvailable;
 } Machine;
 
-typedef struct {
+typedef struct
+{
+    int id;
     char flavor[100];
     int preparation_time;
 } IceCream;
 
-typedef struct {
+typedef struct
+{
     int id;
     int arrival_time;
     int num_orders;
-    char** flavors;
-    char*** toppings;
+    char **flavors;
+    int **toppings;
+    int *num_toppings;
 } CustomerOrder;
 
-typedef struct {
+typedef struct
+{
+    int customer_id;
+    IceCream iceCream;
+    int num_toppings;
+    int *toppings;
+    int isAssigned;
+    int issued_time;
+} singleOrder;
+
+typedef struct
+{
+    int id;
     char topping[100];
     int quantity;
+    int isAvailable;
 } Topping;
 
 int N, K, F, T;
-struct timeval start;
+char topping_info[MAX_TOPPINGS][2][100];
 CustomerOrder customerOrders[MAX_CUSTOMERS];
 Machine machines[MAX_MACHINES];
 IceCream flavors[MAX_FLAVORS];
 Topping toppings[MAX_TOPPINGS];
 
-// create array of customer semaphores
-sem_t customer_sem[MAX_CUSTOMERS];
+sem_t customer_sem;
+
+// binary machine semaphore
+sem_t machineLock;
 
 // create array of machine semaphores
 sem_t machine_sem[MAX_MACHINES];
 
-void splitString(char* input, char* tokens[], const char* delimiter) {
-    char* token = strtok(input, delimiter);
+// function to find topping id from topping name
+int findToppingId(char *topping)
+{
+    for (int i = 0; i < T; ++i)
+    {
+        if (strcmp(topping, topping_info[i][0]) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// function to find flavor id from flavor name
+int findFlavorId(char *flavor)
+{
+    for (int i = 0; i < F; ++i)
+    {
+        if (strcmp(flavor, flavors[i].flavor) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void splitString(char *input, char *tokens[], const char *delimiter)
+{
+    char *token = strtok(input, delimiter);
     int i = 0;
-    while (token != NULL) {
+    while (token != NULL)
+    {
         tokens[i++] = token;
         token = strtok(NULL, delimiter);
     }
     tokens[i] = NULL;
 }
 
-void* customer_thread(void* arg) {
-    CustomerOrder* order = (CustomerOrder*)arg;
-    sleep(order->arrival_time);
-    // semwait
-    sem_wait(&customer_sem[order->id]);
-    struct timeval end;
-    gettimeofday(&end, NULL);
-    int current_time = (int)(end.tv_sec - start.tv_sec);
-    printf("[white colour] Customer %d enters at %d second(s)\n", order->id+1, current_time);
-    printf("[yellow colour]:\nCustomer %d orders %d ice cream(s)\n", order->id+1, order->num_orders);
+void parseCustomerOrder(char *input, CustomerOrder *order)
+{
+    char *tokens[100];
+    splitString(input, tokens, " ");
 
-    for (int i = 0; i < order->num_orders; ++i) {
-        printf("Ice cream %d: %s", i + 1, order->flavors[i]);
-        for (int j = 0; order->toppings[i][j] != NULL; ++j) {
-            printf(" %s", order->toppings[i][j]);
+    order->arrival_time = atoi(tokens[1]);
+    order->num_orders = atoi(tokens[2]);
+
+    order->flavors = (char **)malloc(order->num_orders * sizeof(char *));
+    order->toppings = (int **)malloc(order->num_orders * sizeof(int *));
+    order->num_toppings = (int *)malloc(order->num_orders * sizeof(int));
+
+    for (int i = 0; i < order->num_orders; ++i)
+    {
+        printf(DGREY "Flavour and Toppings of %d: " R, i + 1);
+        fgets(input, 1000, stdin);
+        input[strlen(input) - 1] = '\0';
+
+        char *tokens[100];
+        splitString(input, tokens, " ");
+
+        order->flavors[i] = strdup(tokens[0]);
+
+        int topping_count = 0;
+        for (int j = 1; tokens[j] != NULL; ++j)
+        {
+            int topping_id = findToppingId(tokens[j]);
+            if (topping_id != -1)
+            {
+                order->toppings[i] = (int *)realloc(order->toppings[i], (topping_count + 1) * sizeof(int));
+                order->toppings[i][topping_count] = topping_id;
+                topping_count++;
+            }
         }
-        printf("\n");
+        order->num_toppings[i] = topping_count;
     }
-
-    sem_post(&customer_sem[order->id]);
-    pthread_exit(NULL);
 }
 
-void* machine_thread(void* arg) {
-    Machine* machine = (Machine*)arg;
-    sleep(machines[machine->id].start_time);
-    sem_wait(&machine_sem[machine->id]);
-    struct timeval end;
-    gettimeofday(&end, NULL);
-    int current_time = (int)(end.tv_sec - start.tv_sec);
-    printf("[orange colour] Machine %d has started working at %d second(s)\n", machine->id+1, current_time);
+void *single_order_thread(void *arg)
+{
+    int selected_machine;
+    singleOrder *order = (singleOrder *)arg;
 
-    // Prepare ice cream using the machine
+    printf("Customer %d: %s\n", order->customer_id, order->iceCream.flavor);
+    for (int i = 0; i < order->num_toppings; ++i)
+    {
+        printf("%s ", topping_info[order->toppings[i]][0]);
+    }
+    printf("\n");
+
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+
+    while (order->isAssigned == 0)
+    {
+        for (int i = 0; i < N; i++)
+        {
+            if (machines[i].isAvailable == 0)
+            {
+                continue;
+            }
+            if (sem_trywait(&machine_sem[i]) == 0)
+            {
+                selected_machine = i;
+                order->isAssigned = 1;
+                break;
+            }
+        }
+        usleep(1000); // Sleep for a short time before re-attempt
+    }
+
+    gettimeofday(&end, NULL);
+    int elapsed_time = (int)(end.tv_sec - start.tv_sec);
+
+    printf("[blue colour] Machine %d starts preparing ice cream %d of customer %d at %d second(s)\n", selected_machine + 1, order->iceCream.id + 1, order->customer_id + 1, order->issued_time + elapsed_time);
+
+    sleep(order->iceCream.preparation_time);
+
+    printf("[blue colour] Machine %d completes preparing ice cream %d of customer %d at %d second(s)\n", selected_machine + 1, order->iceCream.id + 1, order->customer_id + 1, order->issued_time + elapsed_time + order->iceCream.preparation_time);
+
+    sem_post(&machine_sem[selected_machine]);
+}
+
+void *customer_thread(void *arg)
+{
+    CustomerOrder *order = (CustomerOrder *)arg;
+    sleep(order->arrival_time);
+    sem_wait(&customer_sem);
+
+    for (int i = 0; i < order->num_orders; ++i)
+    {
+        singleOrder *single_order = (singleOrder *)malloc(sizeof(singleOrder));
+        single_order->customer_id = order->id;
+        strcpy(single_order->iceCream.flavor, order->flavors[i]);
+        single_order->iceCream.preparation_time = flavors[findFlavorId(order->flavors[i])].preparation_time;
+
+        single_order->toppings = (int *)malloc(order->num_toppings[i] * sizeof(int));
+        for (int j = 0; j < order->num_toppings[i]; ++j)
+        {
+            single_order->toppings[j] = order->toppings[i][j];
+        }
+
+        single_order->isAssigned = 0;
+        single_order->issued_time = order->arrival_time;
+        single_order->num_toppings = order->num_toppings[i];
+
+        pthread_t single_order_thread_id;
+        pthread_create(&single_order_thread_id, NULL, single_order_thread, (void *)single_order);
+    }
+}
+
+void *machine_thread(void *arg)
+{
+    Machine *machine = (Machine *)arg;
+    sleep(machines[machine->id].start_time);
+    sem_post(&machine_sem[machine->id]);
+
+    int current_time = machine->start_time;
+    printf("[orange colour] Machine %d has started working at %d second(s)\n", machine->id + 1, current_time);
 
     sem_post(&machine_sem[machine->id]);
-    printf("[orange colour] Machine %d has stopped working at %d second(s)\n", machine->id+1, current_time);
+    sleep(machine->end_time - machine->start_time);
+    printf("[orange colour] Machine %d has stopped working at %d second(s)\n", machine->id + 1, current_time + machine->end_time - machine->start_time);
+    sem_wait(&machineLock);
+    machine->isAvailable = 0;
+    sem_post(&machineLock);
 
     pthread_exit(NULL);
 }
 
-int main() {
+int main()
+{
     pthread_t customer_thread_ids[MAX_CUSTOMERS];
     pthread_t machine_thread_ids[MAX_MACHINES];
-    printf(UWHT"Scanning for N, K, F, T:\n"R);
+
+    printf(UWHT "Scanning for N, K, F, T:\n" R);
     scanf("%d %d %d %d", &N, &K, &F, &T);
 
-    printf(UWHT"Scanning for machine start and end times:\n"R);
-    for (int i = 0; i < N; ++i) {
-        printf(DGREY"Machine %d: "R, i + 1);
+    printf(UWHT "Scanning for machine start and end times:\n" R);
+    for (int i = 0; i < N; ++i)
+    {
+        printf(DGREY "Machine %d: " R, i + 1);
         scanf("%d %d", &machines[i].start_time, &machines[i].end_time);
         machines[i].id = i;
+        machines[i].isAvailable = 1;
     }
 
-    printf(UWHT"Scanning for ice cream flavors and preparation times:\n"R);
-    for (int i = 0; i < F; ++i) {
-        printf(DGREY"Ice cream %d: "R, i + 1);
+    printf(UWHT "Scanning for ice cream flavors and preparation times:\n" R);
+    for (int i = 0; i < F; ++i)
+    {
+        printf(DGREY "Ice cream %d: " R, i + 1);
         scanf("%s %d", flavors[i].flavor, &flavors[i].preparation_time);
+        flavors[i].id = i;
     }
 
-    printf(UWHT"Scanning for topping names and quantities:\n"R);
-    for (int i = 0; i < T; ++i) {
-        printf(DGREY"Topping %d: "R, i + 1);
-        scanf("%s %d", toppings[i].topping, &toppings[i].quantity);
+    printf(UWHT "Scanning for topping names and quantities:\n" R);
+    for (int i = 0; i < T; ++i)
+    {
+        printf(DGREY "Topping %d: " R, i + 1);
+        scanf("%s %d", topping_info[i][0], &topping_info[i][1]);
+        toppings[i].id = i;
     }
 
     char buffer[1000];
     int customer_id = 0;
-    
+
     // skip newline character
     getchar();
 
-    printf(UWHT"Scanning for customer orders:\n"R);
-    while (1) {
-        // reset buffer
+    printf(UWHT "Scanning for customer orders:\n" R);
+    while (1)
+    {
         memset(buffer, 0, sizeof(buffer));
-        printf(DGREY"Customer %d: "R, customer_id+1);
+        printf(DGREY "Customer %d: " R, customer_id + 1);
 
-        // scan input to buffer
         fgets(buffer, sizeof(buffer), stdin);
 
-        // if buffer is \n break
-        if (buffer[0] == '\n') {
+        if (buffer[0] == '\n')
+        {
             break;
         }
 
         buffer[strlen(buffer) - 1] = '\0'; // Remove newline character
-        // printf("Customer %d: %s\n", customer_id, buffer);
+
         CustomerOrder *order = &customerOrders[customer_id];
         order->id = customer_id++;
 
-        char* tokens[100];
-        splitString(buffer, tokens, " ");
-        order->arrival_time = atoi(tokens[1]);
-        order->num_orders = atoi(tokens[2]);
-
-        order->flavors = (char**)malloc(order->num_orders * sizeof(char*));
-        order->toppings = (char***)malloc(order->num_orders * sizeof(char**));
-
-        for (int i = 0; i < order->num_orders; ++i) {
-            printf(DGREY"Flavour and Toppings of %d: "R, i + 1);
-            fgets(buffer, sizeof(buffer), stdin);
-            buffer[strlen(buffer) - 1] = '\0'; // Remove newline character
-
-            char* tokens[100];
-            splitString(buffer, tokens, " ");
-            order->flavors[i] = strdup(tokens[0]);
-
-            order->toppings[i] = (char**)malloc((strlen(buffer) - strlen(tokens[0]) + 1) * sizeof(char*));
-
-            int topping_count = 0;
-            for (int j = 1; tokens[j] != NULL; ++j) {
-                order->toppings[i][topping_count] = strdup(tokens[j]);
-                topping_count++;
-            }
-            order->toppings[i][topping_count] = NULL;
-        }
-
-        // pthread_t customer_thread_id;
-        // pthread_create(&customer_thread_id, NULL, customer_thread, (void*)&order);
+        parseCustomerOrder(buffer, order);
     }
 
-    // initialize customer semaphores
-    for (int i = 0; i < customer_id; ++i) {
-        sem_init(&customer_sem[i], 0, 1);
+    sem_init(&customer_sem, 0, K);
+    sem_init(&machineLock, 0, 1);
+
+    for (int i = 0; i < N; ++i)
+    {
+        sem_init(&machine_sem[i], 0, 0);
     }
 
-    // initialize machine semaphores
-    for (int i = 0; i < N; ++i) {
-        sem_init(&machine_sem[i], 0, 1);
+    for (int i = 0; i < N; ++i)
+    {
+        pthread_create(&machine_thread_ids[i], NULL, machine_thread, (void *)&machines[i].id);
     }
 
-    // create machine threads
-    for (int i = 0; i < N; ++i) {
-        pthread_create(&machine_thread_ids[i], NULL, machine_thread, (void*)&machines[i].id);
+    for (int i = 0; i < customer_id; ++i)
+    {
+        pthread_create(&customer_thread_ids[i], NULL, customer_thread, (void *)&customerOrders[i]);
     }
 
-    gettimeofday(&start, NULL);
-
-    // create customer threads
-    for (int i = 0; i < customer_id; ++i) {
-        pthread_create(&customer_thread_ids[i], NULL, customer_thread, (void*)&customerOrders[i]);
-    }
-    // usleep(1000);
-
-    // Wait for customer threads to finish
-    for (int i = 0; i < customer_id; ++i) {
+    for (int i = 0; i < customer_id; ++i)
+    {
         pthread_join(customer_thread_ids[i], NULL);
     }
-    
-    // Wait for machine threads to finish
-    for (int i = 0; i < N; ++i) {
+
+    for (int i = 0; i < N; ++i)
+    {
         pthread_join(machine_thread_ids[i], NULL);
     }
 
