@@ -189,5 +189,13 @@ void virtio_disk_intr(void);
 int waitx(uint64, uint *, uint *);
 void update_time(void);
 
+// set_priority
+int set_priority(int, int);
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
+#define NOTFOUND (-1)
+#define MAX_PRIO 100
+#define MIN_PRIO 0
+#define DEFAULT_PRIO 50
+#define DEFAULT_RBI 100

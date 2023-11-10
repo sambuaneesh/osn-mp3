@@ -6,6 +6,11 @@
 #include "proc.h"
 #include "defs.h"
 
+int calculate_RBI(uint RTime, uint STime, uint WTime);
+int set_priority(int new_priority, int pid);
+int minOf(int, int);
+int maxOf(int, int);
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -154,6 +159,10 @@ found:
   p->ctime = ticks;
   p->STime = 0;
   p->WTime = 0;
+  p->STATIC_PRIO = DEFAULT_PRIO;
+  p->DYNAMIC_PRIO = 0;
+  p->N_RUN = 0;
+  p->RBI = DEFAULT_RBI;
   return p;
 }
 
@@ -460,34 +469,113 @@ int wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+// DEFAULT SCHEDULER (RR)
+// void scheduler(void)
+// {
+//   struct proc *p;
+//   struct cpu *c = mycpu();
+
+//   c->proc = 0;
+//   for (;;)
+//   {
+//     // Avoid deadlock by ensuring that devices can interrupt.
+//     intr_on();
+
+//     for (p = proc; p < &proc[NPROC]; p++)
+//     {
+//       acquire(&p->lock);
+//       if (p->state == RUNNABLE)
+//       {
+//         // Switch to chosen process.  It is the process's job
+//         // to release its lock and then reacquire it
+//         // before jumping back to us.
+//         p->state = RUNNING;
+//         c->proc = p;
+//         swtch(&c->context, &p->context);
+
+//         // Process is done running for now.
+//         // It should have changed its p->state before coming back.
+//         c->proc = 0;
+//       }
+//       release(&p->lock);
+//     }
+//   }
+// }
+
+// PBS SCHEDULER
+struct spinlock sched_lock;
+
 void scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-
   c->proc = 0;
-  for (;;)
+  while(1) //while? cuz why not?
   {
-    // Avoid deadlock by ensuring that devices can interrupt.
-    intr_on();
+    intr_on(); // Enable interrupts on this processor.
 
+    int min_priority = MAX_PRIO + 1;
+    struct proc *min_proc = 0;
+
+    acquire(&sched_lock); // Acquire the global scheduler lock.
+
+    // Loop over process table looking for process to run.
     for (p = proc; p < &proc[NPROC]; p++)
     {
-      acquire(&p->lock);
-      if (p->state == RUNNABLE)
-      {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+      acquire(&p->lock); // Acquire the lock for the individual process.
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+      if (p->state != RUNNABLE)
+      {
+        release(&p->lock); // Release the lock for the individual process.
+        continue;
       }
-      release(&p->lock);
+      else if (p->state == RUNNABLE)
+      {
+        p->RBI = calculate_RBI(p->RTime, p->STime, p->WTime);
+      }
+
+      p->DYNAMIC_PRIO = minOf(p->STATIC_PRIO + p->RBI, MAX_PRIO);
+
+      if (min_proc == 0 || p->DYNAMIC_PRIO < min_priority)
+      {
+        min_priority = p->DYNAMIC_PRIO;
+        min_proc = p;
+      }
+      else if (p->DYNAMIC_PRIO == min_priority && p->N_RUN < min_proc->N_RUN)
+      {
+        min_priority = p->DYNAMIC_PRIO;
+        min_proc = p;
+      }
+      else if (p->DYNAMIC_PRIO == min_priority && p->N_RUN == min_proc->N_RUN && p->ctime < min_proc->ctime)
+      {
+        min_priority = p->DYNAMIC_PRIO;
+        min_proc = p;
+      }
+      else if (p->DYNAMIC_PRIO == min_priority && p->N_RUN == min_proc->N_RUN && p->ctime == min_proc->ctime)
+      {
+        min_priority = p->DYNAMIC_PRIO;
+        min_proc = p;
+      }
+
+      release(&p->lock); // Release the lock for the individual process.
+    }
+
+    release(&sched_lock); // Release the global scheduler lock.
+
+    if (min_proc != 0)
+    {
+      if (min_proc->state == RUNNABLE)
+      {
+        acquire(&min_proc->lock); // Acquire the lock for the chosen process.
+        // printf("%d %d\n", min_proc->pid, ticks);
+
+        min_proc->state = RUNNING;
+        c->proc = min_proc;
+        swtch(&c->context, &min_proc->context);
+
+        c->proc = 0;
+        release(&min_proc->lock); // Release the lock for the chosen process.
+      }
     }
   }
 }
@@ -780,4 +868,73 @@ void update_time()
     }
     release(&p->lock);
   }
+}
+
+
+int calculate_RBI(uint RTime, uint STime, uint WTime)
+{
+  int RBI;
+  // if running time and sleeping time is 0 that means the process is starting means default value
+  if (RTime == 0 && STime == 0)
+  {
+    RBI = DEFAULT_RBI;
+  }
+  else
+  {
+    RBI = maxOf((3 * RTime - STime - WTime) / (RTime + WTime + STime + 1) * 50, 0);
+  }
+  return RBI;
+}
+
+int set_priority(int new_priority, int pid) {
+  struct proc *p = 0;
+  int old_stat_priority = NOTFOUND;
+  int old_dyn_priority = NOTFOUND;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock); // Acquire the lock for the individual process.
+
+    if (p->pid == pid) {
+      old_stat_priority = p->STATIC_PRIO;
+      p->STATIC_PRIO = new_priority;
+      release(&p->lock); // Release the lock for the individual process.
+      break;
+    }
+
+    p->RBI = calculate_RBI(p->RTime, p->STime, p->WTime);
+    // Store old DYNAMIC_PRIO
+    old_dyn_priority = p->DYNAMIC_PRIO;
+    // Update DYNAMIC_PRIO
+    p->DYNAMIC_PRIO = minOf(p->STATIC_PRIO + p->RBI, MAX_PRIO);
+
+    release(&p->lock); // Release the lock for the individual process.
+  }
+
+  // If old_dyn_prio is greater than new_dyn_prio then yield()
+  // because rescheduling should be done in case of priority increase
+  if (old_dyn_priority > p->DYNAMIC_PRIO) {
+    acquire(&p->lock); // Reacquire the lock before yielding.
+    yield();
+    release(&p->lock); // Release the lock after yielding.
+  }
+
+  return old_stat_priority;
+}
+
+int minOf(int a, int b)
+{
+  if (a < b)
+  {
+    return a;
+  }
+  return b;
+}
+
+int maxOf(int a, int b)
+{
+  if (a > b)
+  {
+    return a;
+  }
+  return b;
 }

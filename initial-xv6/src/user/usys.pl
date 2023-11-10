@@ -38,3 +38,4 @@ entry("sleep");
 entry("uptime");
 entry("waitx");
 entry("getreadcount");
+entry("set_priority");

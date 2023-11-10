@@ -125,6 +125,13 @@ struct proc
               // and not using CPU time) since it was last scheduled.
   uint WTime; // The total time the process has spent in the ready queue waiting
               // to be scheduled
+
+  uint STATIC_PRIO; // The priority of the process
+  uint DYNAMIC_PRIO; // The priority of the process
+
+  int RBI;
+
+  uint N_RUN; // The number of times the process was picked by the scheduler
 };
 
 extern struct proc proc[NPROC];

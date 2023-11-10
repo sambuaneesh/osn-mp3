@@ -267,6 +267,9 @@ int cowHandler(pagetable_t pt, uint64 va)
 {
   if(va >= MAXVA)
     return -1;
+  // write usertestfix
+  else if(va == 0) // because if va is 0 that means it's a null pointer, but we were allocating page earlier which we shouldnt
+    return -1;
 
   pte_t *pte = walk(pt, va, 0);
   if(!check_valid_page(pte))
