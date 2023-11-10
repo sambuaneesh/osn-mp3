@@ -78,7 +78,7 @@ void *customerThread(void *arg) {
     // if tolerance is exceeded, customer leaves
     if (current_time - customer->arrival_time > customer->tolerance) {
         pthread_mutex_lock(&print_mutex);
-        printf(ANSI_COLOR_RED "Customer %d leaves without their order at %d second(s)\n", customer->id, current_time);
+        printf(ANSI_COLOR_RED "Customer %d leaves without their order at %d second(s)\n", customer->id, customer->tolerance + customer->arrival_time);
         waiting_time += customer->tolerance;
         sem_wait(&coffeeWasteMutex);
         coffee_waste++;

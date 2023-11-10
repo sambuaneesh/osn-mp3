@@ -81,6 +81,7 @@ typedef struct
 } Topping;
 
 int N, K, F, T;
+int machineTimeAvailable = 0;
 char topping_info[MAX_TOPPINGS][2][100];
 CustomerOrder customerOrders[MAX_CUSTOMERS];
 Machine machines[MAX_MACHINES];
@@ -94,6 +95,15 @@ sem_t machineLock;
 
 // create array of machine semaphores
 sem_t machine_sem[MAX_MACHINES];
+
+// binary semaphore to access toppings
+sem_t toppingLock;
+
+// binary semaphore to print statements
+sem_t printLock;
+
+// binary semaphore for machineTimeAvailable
+sem_t machineTimeAvailableLock;
 
 // function to find topping id from topping name
 int findToppingId(char *topping)
@@ -176,12 +186,12 @@ void *single_order_thread(void *arg)
     int selected_machine;
     singleOrder *order = (singleOrder *)arg;
 
-    printf("Customer %d: %s\n", order->customer_id, order->iceCream.flavor);
-    for (int i = 0; i < order->num_toppings; ++i)
-    {
-        printf("%s ", topping_info[order->toppings[i]][0]);
-    }
-    printf("\n");
+    // printf("Customer %d: %s\n", order->customer_id, order->iceCream.flavor);
+    // for (int i = 0; i < order->num_toppings; ++i)
+    // {
+    //     printf("%s ", topping_info[order->toppings[i]][0]);
+    // }
+    // printf("\n");
 
     struct timeval start, end;
     gettimeofday(&start, NULL);
@@ -222,6 +232,87 @@ void *customer_thread(void *arg)
     sleep(order->arrival_time);
     sem_wait(&customer_sem);
 
+    // checking if order is feasible or not
+    for(int i=0; i<order->num_orders; ++i){
+        int flavor_id = findFlavorId(order->flavors[i]);
+        if(flavor_id == -1){
+            printf("[red colour] Customer %d unserviced because the flavor %s is not available\n", order->id + 1, order->flavors[i]);
+            sem_post(&customer_sem);
+            pthread_exit(NULL);
+        }
+        for(int j=0; j<order->num_toppings[i]; ++j){
+            int topping_id = findToppingId(topping_info[order->toppings[i][j]][0]);
+            if(topping_id == -1){
+                printf("[red colour] Customer %d unserviced because the topping %s is not available\n", order->id + 1, topping_info[order->toppings[i][j]][0]);
+                sem_post(&customer_sem);
+                pthread_exit(NULL);
+            }
+        }
+
+        // all the topping quantities are stored in topping_info array, from that check whether the quantity of toppings is sufficient or not
+        // for(int j=0; j<order->num_toppings[i]; ++j){
+        //     int topping_id = findToppingId(topping_info[order->toppings[i][j]][0]);
+        //     if(toppings[topping_id].quantity < order->num_toppings[i]){
+        //         printf("[red colour] Customer %d unserviced because the topping %s is not sufficient\n", order->id + 1, topping_info[order->toppings[i][j]][0]);
+        //         sem_post(&customer_sem);
+        //         pthread_exit(NULL);
+        //     }
+        // }
+    }
+
+    // check if the toppings of the orders are available or not if available then reduce the quantity of toppings
+    // for(int i=0; i<order->num_orders; ++i){
+    //     for(int j=0; j<order->num_toppings[i]; ++j){
+    //         int topping_id = findToppingId(topping_info[order->toppings[i][j]][0]);
+    //         // print topping id
+    //         // printf("%d\n", topping_id);
+    //         if(toppings[topping_id].quantity == 0){
+    //             printf("[red colour] Customer %d leaves because the topping %s is not sufficient\n", order->id + 1, topping_info[order->toppings[i][j]][0]);
+    //             sem_post(&customer_sem);
+    //             pthread_exit(NULL);
+    //         }
+    //         else{
+    //             sem_wait(&toppingLock);
+    //             toppings[topping_id].quantity--;
+    //             sem_post(&toppingLock);
+    //         }
+    //     }
+    // }
+
+    // sum the total time required for all the orders and compare it with the machine time available
+    int total_time_required = 0;
+    for(int i=0; i<order->num_orders; ++i){
+        total_time_required += flavors[findFlavorId(order->flavors[i])].preparation_time;
+    }
+    
+    if(total_time_required > machineTimeAvailable){
+        printf("[red colour] Customer %d is unserviced because the total time required is more than the machine time available\n", order->id + 1);
+        sem_post(&customer_sem);
+        pthread_exit(NULL);
+    } else {
+        // check if the machine is available within its running times for the order to complete
+        int flag = 0;
+        for(int i=0; i<order->num_orders; ++i){
+            int flavor_id = findFlavorId(order->flavors[i]);
+            for(int j=0; j<N; ++j){
+                if(machines[j].isAvailable == 1 && machines[j].start_time <= order->arrival_time && machines[j].end_time >= order->arrival_time + flavors[flavor_id].preparation_time){
+                    flag = 1;
+                    break;
+                }
+            }
+            if(flag == 0){
+                printf("[red colour] Customer %d is unserviced because the machine is not available within its running times\n", order->id + 1);
+                sem_post(&customer_sem);
+                pthread_exit(NULL);
+            }
+        }
+
+        sem_wait(&machineTimeAvailableLock);
+        machineTimeAvailable -= total_time_required;
+        sem_post(&machineTimeAvailableLock);
+    }
+
+    // creating single order threads for each order
     for (int i = 0; i < order->num_orders; ++i)
     {
         singleOrder *single_order = (singleOrder *)malloc(sizeof(singleOrder));
@@ -278,6 +369,7 @@ int main()
         scanf("%d %d", &machines[i].start_time, &machines[i].end_time);
         machines[i].id = i;
         machines[i].isAvailable = 1;
+        machineTimeAvailable += machines[i].end_time - machines[i].start_time;
     }
 
     printf(UWHT "Scanning for ice cream flavors and preparation times:\n" R);
@@ -294,6 +386,10 @@ int main()
         printf(DGREY "Topping %d: " R, i + 1);
         scanf("%s %d", topping_info[i][0], &topping_info[i][1]);
         toppings[i].id = i;
+        // update to Topping quantity also
+        strcpy(toppings[i].topping, topping_info[i][0]);
+        toppings[i].quantity = atoi(topping_info[i][1]);
+        toppings[i].isAvailable = 1;
     }
 
     char buffer[1000];
@@ -325,6 +421,9 @@ int main()
 
     sem_init(&customer_sem, 0, K);
     sem_init(&machineLock, 0, 1);
+    sem_init(&toppingLock, 0, 1);
+    sem_init(&printLock, 0, 1);
+    sem_init(&machineTimeAvailableLock, 0, 1);
 
     for (int i = 0; i < N; ++i)
     {

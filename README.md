@@ -14,6 +14,39 @@
 - Answer all the theoretical/analysis-based questions (for PBS scheduler and the concurrency questions) in a single `md `file.
 - You may delete these instructions and add your report before submitting.  -->
 
+# Mini Project - 3 Report
+<!-- TOC start (generated with https://github.com/derlin/bitdowntoc) -->
+
+- [Mini Project - 3 Report](#mini-project---3-report)
+- [Priority-Based Scheduler Implementation in xv6](#priority-based-scheduler-implementation-in-xv6)
+  - [Introduction](#introduction)
+  - [Changes in `proc.c`](#changes-in-procc)
+    - [Scheduler Function](#scheduler-function)
+    - [`set_priority` System Call](#set_priority-system-call)
+  - [Testing the Scheduler](#testing-the-scheduler)
+    - [User Program `set_priority`](#user-program-set_priority)
+    - [Scheduler Test](#scheduler-test)
+  - [Scatterplot for PBS Priorities](#scatterplot-for-pbs-priorities)
+  - [Priority Showdown: SP vs RBI](#priority-showdown-sp-vs-rbi)
+    - [Meet the Contenders](#meet-the-contenders)
+    - [The Action Unveiled](#the-action-unveiled)
+    - [The Dynamic Duo: SP + RBI = DP](#the-dynamic-duo-sp--rbi--dp)
+    - [Effectiveness Meter](#effectiveness-meter)
+  - [(Jokes Aside!) Observations:](#jokes-aside-observations)
+  - [Assumptions](#assumptions)
+- [Cafe Sim](#cafe-sim)
+  - [Overview](#overview)
+  - [Implementation Logic](#implementation-logic)
+    - [Data Structures](#data-structures)
+    - [Thread Functionality](#thread-functionality)
+  - [Evaluation and Insights](#evaluation-and-insights)
+    - [Waiting Time](#waiting-time)
+    - [Coffee Wastage](#coffee-wastage)
+  - [Results](#results)
+  - [Assumptions](#assumptions-1)
+
+<!-- TOC end -->
+
 # Priority-Based Scheduler Implementation in xv6
 
 ## Introduction
@@ -194,6 +227,14 @@ The scatterplot displays the relationship between process PIDs and ticks for dif
     - The denominator in the RBI formula ensures that the RBI is normalized to a reasonable range.
     - The addition of 1 in the denominator prevents division by zero and ensures a smooth transition from the initial state.
 
+## Assumptions
+(In the Scheduler Function) (proc.c)
+- If the dynamic priority is less than the minimum priority then choose that process
+- If the dynamic priority is same then check the number of runs
+	- Less runs more priority
+- If the dynamic priority and the number of runs are same then check for the creation time
+	- First come first serve
+
 ___
 
 # Cafe Sim
@@ -241,6 +282,10 @@ I used a shared variable (`coffee_waste`) protected by a mutex to keep track of 
 2. **Coffee Wastage:**
    - Coffee wastage is determined by customers who leave without their order due to exceeding tolerance.
    - The count of wasted coffees is displayed at the end of the simulation.
+
+## Assumptions
+- When Customer leaves the cafe, the Barista doesnt quit but still completes the order.
+- Once the Customer arrives, no matter if his tolerence exceeds or not, Barista will still complete the order. So that means, Barista completes the order even when customer leaves before Barista starting the order.
 
 ___
 

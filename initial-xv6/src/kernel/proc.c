@@ -535,17 +535,21 @@ void scheduler(void)
       }
 
       p->DYNAMIC_PRIO = minOf(p->STATIC_PRIO + p->RBI, MAX_PRIO);
-
+      // If the dynamic priority is less than the minimum priority then choose that process
       if (min_proc == 0 || p->DYNAMIC_PRIO < min_priority)
       {
         min_priority = p->DYNAMIC_PRIO;
         min_proc = p;
       }
+      // If the dynamic priority is same then check the number of runs
+      // Less runs more priority
       else if (p->DYNAMIC_PRIO == min_priority && p->N_RUN < min_proc->N_RUN)
       {
         min_priority = p->DYNAMIC_PRIO;
         min_proc = p;
       }
+      // If the dynamic priority and the number of runs are same then check for the creation time
+      // First come first serve
       else if (p->DYNAMIC_PRIO == min_priority && p->N_RUN == min_proc->N_RUN && p->ctime < min_proc->ctime)
       {
         min_priority = p->DYNAMIC_PRIO;
