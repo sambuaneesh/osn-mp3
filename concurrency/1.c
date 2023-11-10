@@ -22,6 +22,7 @@ typedef struct {
 } Customer;
 
 int coffee_waste = 0;
+int waiting_time = 0;
 
 CoffeeType coffee_types[MAX_COFFEE_TYPES];
 Customer customers[MAX_CUSTOMERS];
@@ -78,6 +79,7 @@ void *customerThread(void *arg) {
     if (current_time - customer->arrival_time > customer->tolerance) {
         pthread_mutex_lock(&print_mutex);
         printf(ANSI_COLOR_RED "Customer %d leaves without their order at %d second(s)\n", customer->id, current_time);
+        waiting_time += customer->tolerance;
         sem_wait(&coffeeWasteMutex);
         coffee_waste++;
         sem_post(&coffeeWasteMutex);
@@ -88,6 +90,7 @@ void *customerThread(void *arg) {
     printf(ANSI_COLOR_BLUE "Barista %d completes the order of customer %d at %d second(s)\n", selected_barista + 1, customer->id, current_time + 1);
     if(current_time - customer->arrival_time <= customer->tolerance)
         printf(ANSI_COLOR_GREEN "Customer %d leaves with their order at %d second(s)\n", customer->id, current_time + 1);
+        waiting_time += current_time - customer->arrival_time;
     pthread_mutex_unlock(&print_mutex);
 
     sem_post(&baristaSemaphores[selected_barista]);
@@ -154,6 +157,7 @@ int main() {
     }
 
     printf(ANSI_COLOR_WHITE"\n%d coffee wasted", coffee_waste);
+    printf("\nAverage waiting time: %d\n", waiting_time / num_customers);
 
     return 0;
 }
